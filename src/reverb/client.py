@@ -132,7 +132,7 @@ class ReverbClient:
     async def subscribe(
         self,
         channel_name: str,
-        user_data: dict | None = None,
+        user_data: dict[str, Any] | None = None,
     ) -> Channel:
         """
         Subscribe to a channel. Automatically detects channel type from name.

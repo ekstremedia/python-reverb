@@ -3,6 +3,7 @@
 import hashlib
 import hmac
 import json
+from typing import Any
 
 
 class Authenticator:
@@ -24,8 +25,8 @@ class Authenticator:
         self,
         socket_id: str,
         channel_name: str,
-        user_data: dict | None = None,
-    ) -> dict:
+        user_data: dict[str, Any] | None = None,
+    ) -> dict[str, str]:
         """
         Generate authentication payload for channel subscription.
 

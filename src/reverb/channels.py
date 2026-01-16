@@ -162,18 +162,18 @@ class PresenceChannel(PrivateChannel):
     - Access member list
     """
 
-    def __init__(self, name: str, client: ReverbClient, user_data: dict) -> None:
+    def __init__(self, name: str, client: ReverbClient, user_data: dict[str, Any]) -> None:
         super().__init__(name, client)
         self._user_data = user_data
-        self._members: dict[str, dict] = {}
+        self._members: dict[str, dict[str, Any]] = {}
 
     @property
-    def members(self) -> dict[str, dict]:
+    def members(self) -> dict[str, dict[str, Any]]:
         """Current channel members keyed by user_id."""
         return self._members.copy()
 
     @property
-    def me(self) -> dict:
+    def me(self) -> dict[str, Any]:
         """Current user's presence data."""
         return self._user_data
 
@@ -225,7 +225,7 @@ class PresenceChannel(PrivateChannel):
         await super()._handle_event(event, data)
 
 
-def create_channel(name: str, client: ReverbClient, user_data: dict | None = None) -> Channel:
+def create_channel(name: str, client: ReverbClient, user_data: dict[str, Any] | None = None) -> Channel:
     """
     Factory function to create the appropriate channel type based on name prefix.
 
