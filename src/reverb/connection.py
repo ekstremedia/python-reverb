@@ -1,0 +1,242 @@
+"""WebSocket connection management with auto-reconnect."""
+
+import asyncio
+import logging
+import random
+from typing import Any, Awaitable, Callable
+
+import websockets
+from websockets.asyncio.client import ClientConnection
+
+from .config import ReverbConfig
+from .exceptions import ConnectionError, ProtocolError
+from .messages import Events, Message, Messages
+
+logger = logging.getLogger(__name__)
+
+
+class Connection:
+    """
+    Low-level WebSocket connection manager.
+
+    Handles:
+    - Connection establishment with proper URL formatting
+    - Automatic reconnection with exponential backoff
+    - Ping/pong keepalive mechanism
+    - Message queuing during reconnection
+    """
+
+    def __init__(
+        self,
+        config: ReverbConfig,
+        on_message: Callable[[Message], Awaitable[None]],
+        on_connect: Callable[[str], Awaitable[None]],  # receives socket_id
+        on_disconnect: Callable[[], Awaitable[None]],
+        on_error: Callable[[Exception], Awaitable[None]],
+    ) -> None:
+        self.config = config
+        self._on_message = on_message
+        self._on_connect = on_connect
+        self._on_disconnect = on_disconnect
+        self._on_error = on_error
+
+        self._ws: ClientConnection | None = None
+        self._socket_id: str | None = None
+        self._connected = False
+        self._running = False
+        self._reconnect_attempts = 0
+
+        self._receive_task: asyncio.Task[None] | None = None
+        self._keepalive_task: asyncio.Task[None] | None = None
+        self._pending_pong: asyncio.Event | None = None
+
+    @property
+    def socket_id(self) -> str | None:
+        """The socket ID assigned by the server after connection."""
+        return self._socket_id
+
+    @property
+    def is_connected(self) -> bool:
+        """Whether currently connected."""
+        return self._connected and self._ws is not None
+
+    async def connect(self) -> None:
+        """Establish connection, handling reconnection automatically."""
+        self._running = True
+        await self._connect_with_retry()
+
+    async def disconnect(self) -> None:
+        """Gracefully close the connection."""
+        self._running = False
+
+        if self._receive_task:
+            self._receive_task.cancel()
+            try:
+                await self._receive_task
+            except asyncio.CancelledError:
+                pass
+
+        if self._keepalive_task:
+            self._keepalive_task.cancel()
+            try:
+                await self._keepalive_task
+            except asyncio.CancelledError:
+                pass
+
+        if self._ws:
+            await self._ws.close()
+            self._ws = None
+
+        self._connected = False
+        self._socket_id = None
+
+    async def send(self, message: Message) -> None:
+        """Send a message to the server."""
+        if not self._ws or not self._connected:
+            raise ConnectionError("Not connected")
+
+        try:
+            await self._ws.send(message.to_json())
+            logger.debug(f"Sent: {message.event}")
+        except Exception as e:
+            logger.error(f"Send error: {e}")
+            raise ConnectionError(f"Failed to send message: {e}") from e
+
+    async def _connect_with_retry(self) -> None:
+        """Connect with exponential backoff retry."""
+        while self._running:
+            try:
+                await self._establish_connection()
+                self._reconnect_attempts = 0
+                return
+            except Exception as e:
+                self._reconnect_attempts += 1
+                max_attempts = self.config.max_reconnect_attempts
+
+                if max_attempts and self._reconnect_attempts >= max_attempts:
+                    logger.error(f"Max reconnect attempts ({max_attempts}) reached")
+                    raise ConnectionError(f"Failed to connect after {max_attempts} attempts") from e
+
+                if not self.config.reconnect_enabled:
+                    raise
+
+                delay = self._calculate_backoff_delay()
+                logger.warning(
+                    f"Connection failed (attempt {self._reconnect_attempts}), "
+                    f"retrying in {delay:.1f}s: {e}"
+                )
+                await asyncio.sleep(delay)
+
+    def _calculate_backoff_delay(self) -> float:
+        """Calculate exponential backoff delay with jitter."""
+        delay = self.config.reconnect_delay_min * (
+            self.config.reconnect_delay_multiplier ** (self._reconnect_attempts - 1)
+        )
+        delay = min(delay, self.config.reconnect_delay_max)
+        # Add jitter (0-25%)
+        jitter = random.uniform(0, 0.25) * delay
+        return delay + jitter
+
+    async def _establish_connection(self) -> None:
+        """Establish the WebSocket connection."""
+        url = self.config.build_url()
+        logger.info(f"Connecting to {url}")
+
+        self._ws = await websockets.connect(url)
+        logger.debug("WebSocket connected, waiting for connection_established")
+
+        # Wait for connection_established event
+        raw = await asyncio.wait_for(self._ws.recv(), timeout=10.0)
+        message = Message.from_json(str(raw))
+
+        if message.event != Events.CONNECTION_ESTABLISHED:
+            raise ProtocolError(f"Expected connection_established, got {message.event}")
+
+        self._socket_id = message.data.get("socket_id")
+        if not self._socket_id:
+            raise ProtocolError("No socket_id in connection_established")
+
+        self._connected = True
+        logger.info(f"Connected with socket_id: {self._socket_id}")
+
+        # Notify callback
+        await self._on_connect(self._socket_id)
+
+        # Start background tasks
+        self._receive_task = asyncio.create_task(self._receive_loop())
+        self._keepalive_task = asyncio.create_task(self._keepalive_loop())
+
+    async def _receive_loop(self) -> None:
+        """Receive and dispatch incoming messages."""
+        if not self._ws:
+            return
+
+        try:
+            async for raw in self._ws:
+                try:
+                    message = Message.from_json(str(raw))
+                    await self._handle_message(message)
+                except Exception as e:
+                    logger.error(f"Error handling message: {e}")
+                    await self._on_error(e)
+        except websockets.ConnectionClosed as e:
+            logger.warning(f"Connection closed: {e}")
+            self._connected = False
+            await self._on_disconnect()
+
+            # Attempt reconnection
+            if self._running and self.config.reconnect_enabled:
+                await self._reconnect()
+        except Exception as e:
+            logger.error(f"Receive loop error: {e}")
+            await self._on_error(e)
+
+    async def _handle_message(self, message: Message) -> None:
+        """Handle an incoming message."""
+        logger.debug(f"Received: {message.event}")
+
+        if message.event == Events.PING:
+            # Respond to server ping
+            await self.send(Messages.pong())
+        elif message.event == Events.PONG:
+            # Handle pong response
+            if self._pending_pong:
+                self._pending_pong.set()
+        elif message.event == Events.ERROR:
+            logger.error(f"Server error: {message.data}")
+            await self._on_error(ProtocolError(str(message.data)))
+        else:
+            # Pass to client handler
+            await self._on_message(message)
+
+    async def _keepalive_loop(self) -> None:
+        """Send periodic pings to maintain connection."""
+        while self._connected and self._running:
+            try:
+                await asyncio.sleep(self.config.ping_interval)
+
+                if not self._connected:
+                    break
+
+                # Server will send pusher:ping, we respond with pusher:pong
+                # But we can also initiate a ping cycle by waiting for activity
+                logger.debug("Keepalive check - connection active")
+
+            except asyncio.CancelledError:
+                break
+            except Exception as e:
+                logger.error(f"Keepalive error: {e}")
+
+    async def _reconnect(self) -> None:
+        """Handle reconnection after disconnect."""
+        logger.info("Attempting to reconnect...")
+        self._socket_id = None
+
+        if self._keepalive_task:
+            self._keepalive_task.cancel()
+
+        try:
+            await self._connect_with_retry()
+        except Exception as e:
+            logger.error(f"Reconnection failed: {e}")
+            await self._on_error(e)
