@@ -1,14 +1,14 @@
 #!/usr/bin/env python3
 """
-Basic usage example for Python Reverb.
+Basic usage example.
 
-This example shows how to connect to a Reverb server, subscribe to a channel,
-and handle events.
+Connects to a Reverb server, subscribes to a public channel,
+and prints received events.
 
-Environment variables required:
-    REVERB_APP_KEY: Your Reverb application key
-    REVERB_APP_SECRET: Your Reverb application secret
-    REVERB_HOST: Reverb server hostname
+Required environment variables:
+    REVERB_APP_KEY
+    REVERB_APP_SECRET
+    REVERB_HOST
 """
 
 import asyncio
@@ -17,34 +17,27 @@ from typing import Any
 
 from reverb import ReverbClient
 
-logging.basicConfig(level=logging.INFO)
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+)
+logger = logging.getLogger(__name__)
 
 
-async def handle_message(event: str, data: Any, channel: str | None) -> None:
-    """Handle incoming messages."""
-    print(f"Received event '{event}' on channel '{channel}':")
-    print(f"  Data: {data}")
+async def handle_event(event: str, data: Any, channel: str | None) -> None:
+    """Log received events."""
+    logger.info("event=%s channel=%s data=%s", event, channel, data)
 
 
 async def main() -> None:
-    """Main entry point."""
-    # Create client - configuration is loaded from environment variables
     async with ReverbClient() as client:
-        print(f"Connected! Socket ID: {client.socket_id}")
+        logger.info("connected socket_id=%s", client.socket_id)
 
-        # Subscribe to a public channel
         channel = await client.subscribe("notifications")
+        channel.bind("alert", handle_event)
+        channel.bind("info", handle_event)
 
-        # Bind event handlers
-        channel.bind("new-notification", handle_message)
-        channel.bind("alert", handle_message)
-
-        # You can also bind to all events using '*'
-        # channel.bind("*", handle_message)
-
-        print("Listening for events... Press Ctrl+C to stop.")
-
-        # Listen for events (blocks until disconnected)
+        logger.info("listening on channel=%s", channel.name)
         await client.listen()
 
 
@@ -52,4 +45,4 @@ if __name__ == "__main__":
     try:
         asyncio.run(main())
     except KeyboardInterrupt:
-        print("\nGoodbye!")
+        logger.info("shutdown")

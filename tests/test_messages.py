@@ -2,8 +2,6 @@
 
 import json
 
-import pytest
-
 from reverb.messages import Events, Message, Messages
 
 

@@ -3,8 +3,6 @@
 import hashlib
 import hmac
 
-import pytest
-
 from reverb.auth import Authenticator
 
 

@@ -1,238 +1,201 @@
 #!/usr/bin/env python3
 """
-Long-running Reverb listener service for Raspberry Pi.
+Long-running service for Raspberry Pi.
 
-This script connects to a Reverb server and listens for events,
-executing local commands or actions based on received messages.
+Listens for commands from a Reverb server and executes local actions.
+Designed to run as a systemd service.
 
-Usage:
-    python raspberry_pi_service.py
+Required environment variables:
+    REVERB_APP_KEY
+    REVERB_APP_SECRET
+    REVERB_HOST
 
-Environment:
-    REVERB_APP_KEY: Your Reverb application key
-    REVERB_APP_SECRET: Your Reverb application secret
-    REVERB_HOST: Reverb server hostname
-    REVERB_PORT: WebSocket port (default: 443)
-    REVERB_SCHEME: ws or wss (default: wss)
+Optional:
+    DEVICE_ID - unique identifier for this device (default: hostname)
 """
 
 import asyncio
 import logging
 import os
 import signal
+import socket
 import subprocess
-import sys
 from pathlib import Path
 from typing import Any
 
 from reverb import Events, ReverbClient
 
-# Configure logging
 logging.basicConfig(
     level=logging.INFO,
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-    handlers=[
-        logging.StreamHandler(),
-        # Uncomment to log to file:
-        # logging.FileHandler("/var/log/reverb-service.log"),
-    ],
+    format="%(asctime)s %(levelname)s %(name)s: %(message)s",
 )
 logger = logging.getLogger("reverb-service")
 
+DEVICE_ID = os.environ.get("DEVICE_ID", socket.gethostname())
+SCRIPTS_DIR = Path(os.environ.get("SCRIPTS_DIR", "/opt/scripts"))
 
-class ReverbService:
-    """Long-running service that listens to Reverb events."""
 
+class Service:
     def __init__(self) -> None:
         self.client: ReverbClient | None = None
         self.running = False
-        self._shutdown_event = asyncio.Event()
+        self._shutdown = asyncio.Event()
 
     async def start(self) -> None:
-        """Start the service."""
-        logger.info("Starting Reverb service...")
+        logger.info("starting device_id=%s", DEVICE_ID)
         self.running = True
 
-        # Setup signal handlers for graceful shutdown
         loop = asyncio.get_event_loop()
         for sig in (signal.SIGTERM, signal.SIGINT):
-            loop.add_signal_handler(sig, self._handle_shutdown)
+            loop.add_signal_handler(sig, self._signal_handler)
 
         while self.running:
             try:
                 await self._run()
-            except Exception as e:
-                logger.error(f"Service error: {e}", exc_info=True)
+            except Exception:
+                logger.exception("service error")
                 if self.running:
-                    logger.info("Restarting in 5 seconds...")
+                    logger.info("restarting in 5s")
                     await asyncio.sleep(5)
 
     async def _run(self) -> None:
-        """Main service loop."""
         async with ReverbClient() as client:
             self.client = client
 
-            # Subscribe to device control channel
-            # You can customize this channel name based on your setup
-            device_id = os.environ.get("DEVICE_ID", "raspberry-pi-001")
-            device_channel = await client.subscribe(f"private-device.{device_id}")
-            device_channel.bind("command", self._handle_command)
-            device_channel.bind("ping", self._handle_ping)
+            # Device-specific private channel
+            device = await client.subscribe(f"private-device.{DEVICE_ID}")
+            device.bind("command", self._on_command)
+            device.bind("ping", self._on_ping)
 
-            # Subscribe to broadcast channel for system-wide events
-            broadcast = await client.subscribe("system-broadcast")
-            broadcast.bind("announcement", self._handle_announcement)
+            # Global broadcast channel
+            broadcast = await client.subscribe("system")
+            broadcast.bind("announcement", self._on_announcement)
 
-            # Global error handler
-            client.bind(Events.ERROR, self._handle_error)
+            client.bind(Events.ERROR, self._on_error)
 
-            logger.info("Connected and subscribed. Listening for events...")
+            logger.info("connected socket_id=%s", client.socket_id)
 
-            # Listen until shutdown signal
-            listen_task = asyncio.create_task(client.listen())
-            shutdown_task = asyncio.create_task(self._shutdown_event.wait())
+            listen = asyncio.create_task(client.listen())
+            shutdown = asyncio.create_task(self._shutdown.wait())
 
             done, pending = await asyncio.wait(
-                [listen_task, shutdown_task],
+                [listen, shutdown],
                 return_when=asyncio.FIRST_COMPLETED,
             )
 
             for task in pending:
                 task.cancel()
 
-    async def _handle_command(self, event: str, data: Any, channel: str | None) -> None:
-        """Handle incoming command events."""
+    async def _on_command(self, event: str, data: Any, channel: str | None) -> None:
         action = data.get("action")
         params = data.get("params", {})
+        logger.info("command action=%s params=%s", action, params)
 
-        logger.info(f"Received command: {action} with params: {params}")
-
-        # Example command handlers - customize based on your needs
         if action == "run_script":
-            await self._run_script(params.get("script_name"))
-        elif action == "capture_image":
-            await self._capture_image(params)
-        elif action == "send_status":
+            await self._run_script(params.get("name"))
+        elif action == "capture":
+            await self._capture(params)
+        elif action == "status":
             await self._send_status()
         elif action == "reboot":
             await self._reboot()
         else:
-            logger.warning(f"Unknown command: {action}")
+            logger.warning("unknown action=%s", action)
 
-    async def _handle_ping(self, event: str, data: Any, channel: str | None) -> None:
-        """
-        Handle ping events from the web server.
-
-        This is the callback that triggers when users visit your webpage.
-        """
-        logger.info(f"Received ping: {data}")
-
-        # Example: Capture and send images when pinged
+    async def _on_ping(self, event: str, data: Any, channel: str | None) -> None:
+        """Respond to ping requests, typically triggered by web page visits."""
         request_id = data.get("request_id")
-        if request_id:
-            await self._capture_and_send_images(request_id)
+        logger.info("ping request_id=%s", request_id)
 
-    async def _capture_and_send_images(self, request_id: str) -> None:
-        """Capture images and send them to the web server."""
-        logger.info(f"Capturing images for request: {request_id}")
-
-        # Example: Run a script that captures images
-        script_path = Path("/opt/scripts/capture_images.sh")
-        if script_path.exists():
-            try:
-                process = await asyncio.create_subprocess_exec(
-                    str(script_path),
-                    request_id,
-                    stdout=asyncio.subprocess.PIPE,
-                    stderr=asyncio.subprocess.PIPE,
-                )
-                stdout, stderr = await process.communicate()
-
-                if process.returncode == 0:
-                    logger.info(f"Images captured successfully: {stdout.decode()}")
-                else:
-                    logger.error(f"Image capture failed: {stderr.decode()}")
-            except Exception as e:
-                logger.error(f"Failed to capture images: {e}")
+        # Execute configured response action
+        script = SCRIPTS_DIR / "on_ping.sh"
+        if script.exists():
+            await self._execute(script, request_id or "")
         else:
-            logger.warning(f"Capture script not found: {script_path}")
-
-            # Example fallback: Send a client event back
+            # Default: send acknowledgment via client event
             if self.client:
-                channel = self.client.channels.get("system-broadcast")
-                if channel:
-                    await channel.trigger("image-ready", {
+                ch = self.client.channels.get(f"private-device.{DEVICE_ID}")
+                if ch:
+                    await ch.trigger("pong", {
+                        "device_id": DEVICE_ID,
                         "request_id": request_id,
-                        "device_id": os.environ.get("DEVICE_ID", "unknown"),
-                        "status": "script_not_found",
                     })
 
-    async def _handle_announcement(self, event: str, data: Any, channel: str | None) -> None:
-        """Handle system announcements."""
-        logger.info(f"System announcement: {data.get('message')}")
+    async def _on_announcement(self, event: str, data: Any, channel: str | None) -> None:
+        logger.info("announcement: %s", data.get("message"))
 
-    async def _handle_error(self, event: str, data: Any, channel: str | None) -> None:
-        """Handle Reverb errors."""
-        logger.error(f"Reverb error: {data}")
+    async def _on_error(self, event: str, data: Any, channel: str | None) -> None:
+        logger.error("reverb error: %s", data)
 
-    async def _run_script(self, script_name: str | None) -> None:
-        """Execute a local script."""
-        if not script_name:
+    async def _run_script(self, name: str | None) -> None:
+        if not name:
             return
 
-        script_path = Path(f"/opt/scripts/{script_name}")
-        if not script_path.exists():
-            logger.error(f"Script not found: {script_path}")
+        script = SCRIPTS_DIR / name
+        if not script.exists():
+            logger.error("script not found: %s", script)
             return
 
-        try:
-            process = await asyncio.create_subprocess_exec(
-                str(script_path),
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-            )
-            stdout, stderr = await process.communicate()
+        await self._execute(script)
 
-            if process.returncode == 0:
-                logger.info(f"Script {script_name} completed successfully")
-            else:
-                logger.error(f"Script {script_name} failed: {stderr.decode()}")
-        except Exception as e:
-            logger.error(f"Failed to run script: {e}")
+    async def _execute(self, script: Path, *args: str) -> tuple[int, str, str]:
+        logger.info("executing %s %s", script, args)
+        proc = await asyncio.create_subprocess_exec(
+            str(script),
+            *args,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        stdout, stderr = await proc.communicate()
 
-    async def _capture_image(self, params: dict) -> None:
-        """Capture an image (example - customize for your camera setup)."""
-        logger.info(f"Capturing image with params: {params}")
-        # Add your image capture logic here
-        # e.g., using picamera2, OpenCV, or calling a capture script
+        if proc.returncode == 0:
+            logger.info("script succeeded: %s", stdout.decode().strip())
+        else:
+            logger.error("script failed: %s", stderr.decode().strip())
+
+        return proc.returncode or 0, stdout.decode(), stderr.decode()
+
+    async def _capture(self, params: dict) -> None:
+        """Capture images. Implementation depends on camera setup."""
+        logger.info("capture params=%s", params)
+        script = SCRIPTS_DIR / "capture.sh"
+        if script.exists():
+            await self._execute(script)
 
     async def _send_status(self) -> None:
-        """Send device status back to the server."""
-        logger.info("Sending device status...")
-        # Add your status reporting logic here
+        """Send device status back to server."""
+        if not self.client:
+            return
+
+        # Collect system info
+        try:
+            with open("/proc/loadavg") as f:
+                load = f.read().split()[0]
+        except Exception:
+            load = "unknown"
+
+        ch = self.client.channels.get(f"private-device.{DEVICE_ID}")
+        if ch:
+            await ch.trigger("status", {
+                "device_id": DEVICE_ID,
+                "load": load,
+            })
 
     async def _reboot(self) -> None:
-        """Reboot the system."""
-        logger.warning("Reboot requested - rebooting in 5 seconds...")
-        await asyncio.sleep(5)
+        logger.warning("reboot requested")
+        await asyncio.sleep(2)
         subprocess.run(["sudo", "reboot"], check=False)
 
-    def _handle_shutdown(self) -> None:
-        """Handle shutdown signal."""
-        logger.info("Shutdown signal received")
+    def _signal_handler(self) -> None:
+        logger.info("shutdown signal received")
         self.running = False
-        self._shutdown_event.set()
+        self._shutdown.set()
 
 
 async def main() -> None:
-    """Entry point."""
-    service = ReverbService()
+    service = Service()
     await service.start()
 
 
 if __name__ == "__main__":
-    try:
-        asyncio.run(main())
-    except KeyboardInterrupt:
-        logger.info("Service stopped by user")
-        sys.exit(0)
+    asyncio.run(main())

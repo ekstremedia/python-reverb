@@ -3,7 +3,6 @@
 import pytest
 
 from reverb.channels import (
-    Channel,
     PresenceChannel,
     PrivateChannel,
     PublicChannel,

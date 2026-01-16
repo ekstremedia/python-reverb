@@ -3,7 +3,7 @@
 import asyncio
 import logging
 import random
-from typing import Any, Awaitable, Callable
+from typing import Awaitable, Callable
 
 import websockets
 from websockets.asyncio.client import ClientConnection
