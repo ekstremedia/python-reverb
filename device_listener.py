@@ -117,12 +117,21 @@ class DeviceListener:
             logger.info("connected socket_id=%s", client.socket_id)
 
             # Subscribe to device channel
-            channel = await client.subscribe(f"device.{DEVICE_ID}")
+            channel_name = f"device.{DEVICE_ID}"
+            logger.info("subscribing to channel: %s", channel_name)
+            channel = await client.subscribe(channel_name)
+            logger.info("subscribed successfully, binding handlers...")
 
             # Bind event handlers
             channel.bind("health.ping", self._on_health_ping)
             channel.bind("vitals.request", self._on_vitals_request)
             channel.bind("capture.request", self._on_capture_request)
+
+            # Debug: log ALL events on this channel
+            channel.bind("*", self._on_any_event)
+
+            # Also bind a global handler on the client to see ALL events
+            client.bind("*", self._on_global_event)
 
             logger.info("listening on channel device.%s", DEVICE_ID)
 
@@ -137,6 +146,18 @@ class DeviceListener:
 
             for task in pending:
                 task.cancel()
+
+    # -------------------------------------------------------------------------
+    # Debug: Log all events
+    # -------------------------------------------------------------------------
+
+    async def _on_any_event(self, event: str, data: Any, channel: str | None) -> None:
+        """Debug handler - logs all received events on channel."""
+        logger.debug("CHANNEL EVENT: event=%s channel=%s data=%s", event, channel, data)
+
+    async def _on_global_event(self, event: str, data: Any, channel: str | None) -> None:
+        """Debug handler - logs all global events."""
+        logger.info("GLOBAL EVENT: event=%s channel=%s", event, channel)
 
     # -------------------------------------------------------------------------
     # 1. Health Check - Simple online/offline check
