@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import pytest
-
 from reverb.config import ReverbConfig
 from reverb.connection import Connection
 from reverb.messages import Message

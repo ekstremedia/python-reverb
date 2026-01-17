@@ -8,7 +8,7 @@ Type=simple
 User=pi
 WorkingDirectory=/home/pi/python-reverb
 EnvironmentFile=/home/pi/python-reverb/.env
-ExecStart=/home/pi/python-reverb/venv/bin/python examples/kringelen_01.py
+ExecStart=/home/pi/python-reverb/venv/bin/python device_listener.py
 Restart=always
 RestartSec=10
 

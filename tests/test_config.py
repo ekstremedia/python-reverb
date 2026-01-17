@@ -1,7 +1,5 @@
 """Tests for configuration management."""
 
-import os
-
 import pytest
 
 from reverb.config import ReverbConfig

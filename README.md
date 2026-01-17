@@ -18,6 +18,7 @@ From source:
 ```bash
 git clone https://github.com/terje/python-reverb.git
 cd python-reverb
+pip install -r requirements.txt
 pip install -e .
 ```
 
@@ -180,8 +181,11 @@ python device_listener.py
 The script:
 - Reads `DEVICE_ID` from `.env` to identify itself
 - Subscribes to `device.{DEVICE_ID}` channel
-- Responds to `health.ping` events with system metrics
-- Listens for `command` events (extensible)
+- Responds to commands:
+  - `health.ping` - Simple online/offline check
+  - `vitals.request` - Returns system metrics (CPU, memory, temperature, uptime, disk)
+  - `capture.request` - Runs capture script and uploads photo (configurable via `CAPTURE_SCRIPT`)
+- Auto-reconnects on connection errors
 
 See [docs/RASPBERRY_PI_SETUP.md](docs/RASPBERRY_PI_SETUP.md) for systemd service setup.
 

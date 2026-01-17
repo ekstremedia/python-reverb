@@ -149,7 +149,7 @@ class TestReconnection:
         from reverb import ReverbClient
 
         async with ReverbClient() as client:
-            original_socket_id = client.socket_id
+            assert client.socket_id is not None
             assert client.is_connected
 
             # Force disconnect by closing websocket
