@@ -290,8 +290,9 @@ class DeviceListener:
         env["IMAGE_BASE_PATH"] = IMAGE_BASE_PATH or ""
 
         # Pass any extra params as environment variables
-        for key, value in params.items():
-            env[f"CAPTURE_{key.upper()}"] = str(value)
+        if isinstance(params, dict):
+            for key, value in params.items():
+                env[f"CAPTURE_{key.upper()}"] = str(value)
 
         proc = await asyncio.create_subprocess_exec(
             str(script),
