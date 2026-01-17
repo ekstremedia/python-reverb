@@ -183,15 +183,30 @@ class Connection:
                     await self._on_error(e)
         except websockets.ConnectionClosed as e:
             logger.warning(f"Connection closed: {e}")
-            self._connected = False
-            await self._on_disconnect()
-
-            # Attempt reconnection
-            if self._running and self.config.reconnect_enabled:
-                await self._reconnect()
+            await self._handle_connection_lost()
         except Exception as e:
             logger.error(f"Receive loop error: {e}")
             await self._on_error(e)
+            # Treat unexpected errors as connection loss and attempt reconnect
+            await self._handle_connection_lost()
+
+    async def _handle_connection_lost(self) -> None:
+        """Handle connection loss and attempt reconnection."""
+        self._connected = False
+
+        # Clean up the websocket
+        if self._ws:
+            try:
+                await self._ws.close()
+            except Exception:
+                pass
+            self._ws = None
+
+        await self._on_disconnect()
+
+        # Attempt reconnection
+        if self._running and self.config.reconnect_enabled:
+            await self._reconnect()
 
     async def _handle_message(self, message: Message) -> None:
         """Handle an incoming message."""
@@ -234,8 +249,17 @@ class Connection:
         logger.info("Attempting to reconnect...")
         self._socket_id = None
 
+        # Cancel keepalive task
         if self._keepalive_task:
             self._keepalive_task.cancel()
+            try:
+                await self._keepalive_task
+            except asyncio.CancelledError:
+                pass
+            self._keepalive_task = None
+
+        # Brief delay before reconnecting to avoid rapid reconnection loops
+        await asyncio.sleep(1.0)
 
         try:
             await self._connect_with_retry()
