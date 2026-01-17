@@ -124,6 +124,10 @@ class DeviceListener:
             channel.bind("vitals.request", self._on_vitals_request)
             channel.bind("capture.request", self._on_capture_request)
 
+            # Debug: uncomment to log ALL events
+            # channel.bind("*", self._on_any_event)
+            # client.bind("*", self._on_global_event)
+
             logger.info("listening on channel device.%s", DEVICE_ID)
 
             # Wait for shutdown or disconnect
@@ -137,6 +141,18 @@ class DeviceListener:
 
             for task in pending:
                 task.cancel()
+
+    # -------------------------------------------------------------------------
+    # Debug: Log all events (uncomment bindings above to use)
+    # -------------------------------------------------------------------------
+
+    async def _on_any_event(self, event: str, data: Any, channel: str | None) -> None:
+        """Debug handler - logs all received events on channel."""
+        logger.debug("CHANNEL EVENT: event=%s channel=%s data=%s", event, channel, data)
+
+    async def _on_global_event(self, event: str, data: Any, channel: str | None) -> None:
+        """Debug handler - logs all global events."""
+        logger.info("GLOBAL EVENT: event=%s channel=%s", event, channel)
 
     # -------------------------------------------------------------------------
     # 1. Health Check - Simple online/offline check
