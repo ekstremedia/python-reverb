@@ -1,5 +1,7 @@
 """Tests for configuration management."""
 
+import os
+
 import pytest
 
 from reverb.config import ReverbConfig
@@ -8,10 +10,18 @@ from reverb.config import ReverbConfig
 class TestReverbConfig:
     """Tests for the ReverbConfig class."""
 
-    def test_required_fields(self):
+    def test_required_fields(self, monkeypatch):
         """Test that required fields are enforced."""
+        # Clear environment variables that might provide defaults
+        monkeypatch.delenv("REVERB_APP_KEY", raising=False)
+        monkeypatch.delenv("REVERB_APP_SECRET", raising=False)
+        monkeypatch.delenv("REVERB_HOST", raising=False)
+
+        # Change to a directory without .env file
+        monkeypatch.chdir("/tmp")
+
         with pytest.raises(Exception):  # ValidationError
-            ReverbConfig()
+            ReverbConfig(_env_file=None)
 
     def test_default_values(self, config):
         """Test default configuration values."""

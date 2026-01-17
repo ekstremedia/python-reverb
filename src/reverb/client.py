@@ -1,5 +1,7 @@
 """Main ReverbClient class for connecting to Laravel Reverb servers."""
 
+from __future__ import annotations
+
 import asyncio
 import logging
 from typing import Any

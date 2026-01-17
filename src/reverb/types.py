@@ -1,18 +1,20 @@
 """Type definitions for Python Reverb."""
 
-from typing import Any, Awaitable, Callable, Protocol, TypeAlias
+from __future__ import annotations
+
+from typing import Any, Awaitable, Callable, Dict, Optional, Protocol
 
 # Event handler that receives (event_name, data, channel_name)
-EventHandler: TypeAlias = Callable[[str, Any, str | None], Awaitable[None]]
+EventHandler = Callable[[str, Any, Optional[str]], Awaitable[None]]
 
 # Simpler handler that just receives data
-SimpleEventHandler: TypeAlias = Callable[[Any], Awaitable[None]]
+SimpleEventHandler = Callable[[Any], Awaitable[None]]
 
 # Connection state callback
-ConnectionCallback: TypeAlias = Callable[[], Awaitable[None]]
+ConnectionCallback = Callable[[], Awaitable[None]]
 
 # Message callback (receives raw message dict)
-MessageCallback: TypeAlias = Callable[[dict[str, Any]], Awaitable[None]]
+MessageCallback = Callable[[Dict[str, Any]], Awaitable[None]]
 
 
 class ChannelProtocol(Protocol):

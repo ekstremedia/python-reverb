@@ -1,6 +1,8 @@
 """Configuration management for Python Reverb."""
 
-from typing import Literal
+from __future__ import annotations
+
+from typing import Literal, Optional
 
 from pydantic import Field, SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -43,7 +45,7 @@ class ReverbConfig(BaseSettings):
     reconnect_delay_min: float = Field(default=1.0, description="Min reconnect delay (seconds)")
     reconnect_delay_max: float = Field(default=30.0, description="Max reconnect delay (seconds)")
     reconnect_delay_multiplier: float = Field(default=2.0, description="Backoff multiplier")
-    max_reconnect_attempts: int | None = Field(
+    max_reconnect_attempts: Optional[int] = Field(
         default=None, description="Max attempts (None=infinite)"
     )
 

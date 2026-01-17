@@ -4,7 +4,7 @@ Async Python client for Laravel Reverb WebSocket servers. Implements the Pusher 
 
 ## Requirements
 
-- Python 3.10+
+- Python 3.9+
 - Laravel Reverb server or any Pusher-compatible WebSocket server
 
 ## Installation
@@ -157,95 +157,35 @@ channel.bind(Events.MEMBER_ADDED, on_join)
 channel.bind(Events.MEMBER_REMOVED, on_leave)
 ```
 
-## Use Cases
+## Device Listener
 
-### IoT Device Control
+A ready-to-use device listener script is included for IoT/Raspberry Pi deployments:
 
-Raspberry Pi connecting to a central server for remote commands:
+```bash
+# 1. Clone and install
+git clone https://github.com/terje/python-reverb.git
+cd python-reverb
+python3 -m venv venv
+source venv/bin/activate
+pip install . aiohttp
 
-```python
-import os
-from reverb import ReverbClient
+# 2. Configure
+cp .env.example .env
+# Edit .env with your DEVICE_ID and server credentials
 
-DEVICE_ID = os.environ.get("DEVICE_ID", "rpi-001")
-
-async def main():
-    async with ReverbClient() as client:
-        device = await client.subscribe(f"private-device.{DEVICE_ID}")
-
-        async def handle_command(event, data, channel):
-            action = data.get("action")
-            if action == "capture":
-                path = capture_image()
-                upload(path, data.get("request_id"))
-            elif action == "reboot":
-                os.system("sudo reboot")
-
-        device.bind("command", handle_command)
-        await client.listen()
+# 3. Run
+python device_listener.py
 ```
 
-### Real-time Data Sync
+The script:
+- Reads `DEVICE_ID` from `.env` to identify itself
+- Subscribes to `device.{DEVICE_ID}` channel
+- Responds to `health.ping` events with system metrics
+- Listens for `command` events (extensible)
 
-Backend service receiving updates pushed from the web application:
+See [docs/RASPBERRY_PI_SETUP.md](docs/RASPBERRY_PI_SETUP.md) for systemd service setup.
 
-```python
-async def main():
-    async with ReverbClient() as client:
-        channel = await client.subscribe("private-sync.inventory")
-
-        async def on_update(event, data, channel):
-            item_id = data["id"]
-            new_quantity = data["quantity"]
-            update_local_database(item_id, new_quantity)
-
-        channel.bind("item.updated", on_update)
-        await client.listen()
-```
-
-### Chat Moderation Bot
-
-Monitor chat rooms for content moderation:
-
-```python
-async def main():
-    async with ReverbClient() as client:
-        room = await client.subscribe(
-            "presence-chat.general",
-            user_data={"user_id": "bot-moderator", "user_info": {"name": "ModBot"}}
-        )
-
-        async def moderate(event, data, channel):
-            if is_spam(data.get("text", "")):
-                await flag_message(data["message_id"])
-
-        room.bind("client-message", moderate)
-        await client.listen()
-```
-
-### Webhook Relay
-
-Forward incoming webhooks to WebSocket subscribers:
-
-```python
-from aiohttp import web
-from reverb import ReverbClient
-
-async def webhook_handler(request):
-    payload = await request.json()
-    source = request.match_info["source"]
-
-    async with ReverbClient() as client:
-        await client.connect()
-        channel = await client.subscribe(f"private-webhooks.{source}")
-        await channel.trigger("received", payload)
-
-    return web.Response(status=200)
-```
-
-## Running as a System Service
-
-### systemd
+### Quick systemd Setup
 
 Create `/etc/systemd/system/reverb-client.service`:
 
@@ -258,9 +198,9 @@ Wants=network-online.target
 [Service]
 Type=simple
 User=pi
-WorkingDirectory=/home/pi/app
-EnvironmentFile=/home/pi/app/.env
-ExecStart=/home/pi/app/venv/bin/python listener.py
+WorkingDirectory=/home/pi/python-reverb
+EnvironmentFile=/home/pi/python-reverb/.env
+ExecStart=/home/pi/python-reverb/venv/bin/python device_listener.py
 Restart=always
 RestartSec=10
 
@@ -272,11 +212,6 @@ WantedBy=multi-user.target
 sudo systemctl daemon-reload
 sudo systemctl enable reverb-client
 sudo systemctl start reverb-client
-```
-
-View logs:
-
-```bash
 sudo journalctl -u reverb-client -f
 ```
 

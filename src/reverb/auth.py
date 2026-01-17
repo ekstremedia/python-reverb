@@ -1,5 +1,7 @@
 """HMAC-SHA256 authentication for private/presence channels."""
 
+from __future__ import annotations
+
 import hashlib
 import hmac
 import json
