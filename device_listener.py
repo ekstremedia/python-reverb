@@ -117,21 +117,16 @@ class DeviceListener:
             logger.info("connected socket_id=%s", client.socket_id)
 
             # Subscribe to device channel
-            channel_name = f"device.{DEVICE_ID}"
-            logger.info("subscribing to channel: %s", channel_name)
-            channel = await client.subscribe(channel_name)
-            logger.info("subscribed successfully, binding handlers...")
+            channel = await client.subscribe(f"device.{DEVICE_ID}")
 
             # Bind event handlers
             channel.bind("health.ping", self._on_health_ping)
             channel.bind("vitals.request", self._on_vitals_request)
             channel.bind("capture.request", self._on_capture_request)
 
-            # Debug: log ALL events on this channel
-            channel.bind("*", self._on_any_event)
-
-            # Also bind a global handler on the client to see ALL events
-            client.bind("*", self._on_global_event)
+            # Debug: uncomment to log ALL events
+            # channel.bind("*", self._on_any_event)
+            # client.bind("*", self._on_global_event)
 
             logger.info("listening on channel device.%s", DEVICE_ID)
 
@@ -148,7 +143,7 @@ class DeviceListener:
                 task.cancel()
 
     # -------------------------------------------------------------------------
-    # Debug: Log all events
+    # Debug: Log all events (uncomment bindings above to use)
     # -------------------------------------------------------------------------
 
     async def _on_any_event(self, event: str, data: Any, channel: str | None) -> None:
