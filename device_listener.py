@@ -28,6 +28,7 @@ import os
 import platform
 import signal
 import sys
+import time
 from pathlib import Path
 from typing import Any
 
@@ -71,11 +72,16 @@ logger = logging.getLogger(f"device.{DEVICE_ID}")
 class DeviceListener:
     """Listens for commands from the server and responds."""
 
+    # Minimum seconds between capture requests
+    CAPTURE_COOLDOWN = 15
+
     def __init__(self) -> None:
         self.client: ReverbClient | None = None
         self.running = False
         self._shutdown = asyncio.Event()
         self._http_session: aiohttp.ClientSession | None = None
+        self._last_capture_time: float = 0
+        self._capture_in_progress = False
 
     async def start(self) -> None:
         """Start the listener."""
@@ -243,6 +249,21 @@ class DeviceListener:
         params = data.get("params", {})
         logger.info("capture.request received request_id=%s params=%s", request_id, params)
 
+        # Rate limit: ignore if capture already in progress
+        if self._capture_in_progress:
+            logger.warning("capture.request ignored - capture already in progress request_id=%s", request_id)
+            return
+
+        # Rate limit: ignore if last capture was too recent
+        now = time.time()
+        since_last = now - self._last_capture_time
+        if since_last < self.CAPTURE_COOLDOWN:
+            logger.warning(
+                "capture.request ignored - cooldown (%.1fs since last) request_id=%s",
+                since_last, request_id
+            )
+            return
+
         script_path = Path(CAPTURE_SCRIPT)
 
         if not script_path.exists():
@@ -255,7 +276,9 @@ class DeviceListener:
             })
             return
 
-        # Run capture script
+        # Run capture script with rate limiting
+        self._capture_in_progress = True
+        self._last_capture_time = time.time()
         try:
             result = await self._run_capture_script(script_path, request_id, params)
             await self._api_post("/api/device/capture/complete", {
@@ -274,6 +297,8 @@ class DeviceListener:
                 "success": False,
                 "error": str(e),
             })
+        finally:
+            self._capture_in_progress = False
 
     async def _run_capture_script(
         self, script: Path, request_id: str, params: dict[str, Any]
