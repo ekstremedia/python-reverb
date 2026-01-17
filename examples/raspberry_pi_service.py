@@ -14,6 +14,8 @@ Optional:
     DEVICE_ID - unique identifier for this device (default: hostname)
 """
 
+from __future__ import annotations
+
 import asyncio
 import logging
 import os

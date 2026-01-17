@@ -1,0 +1,16 @@
+[Unit]
+Description=Reverb WebSocket Client
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=pi
+WorkingDirectory=/home/pi/python-reverb
+EnvironmentFile=/home/pi/python-reverb/.env
+ExecStart=/home/pi/python-reverb/venv/bin/python examples/kringelen_01.py
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target
