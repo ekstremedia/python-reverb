@@ -223,7 +223,9 @@ class ReverbClient:
         logger.info("Starting message listener...")
         try:
             while self._connection.is_connected:
-                await asyncio.sleep(0.1)
+                await asyncio.sleep(0.5)
+            # Connection lost - log it
+            logger.warning("Listen loop exiting - connection lost")
         except asyncio.CancelledError:
             logger.info("Listener cancelled")
             raise

@@ -60,7 +60,14 @@ class Connection:
     @property
     def is_connected(self) -> bool:
         """Whether currently connected."""
-        return self._connected and self._ws is not None
+        # Also check the actual websocket state, not just our flag
+        if not self._connected or self._ws is None:
+            return False
+        # Check if websocket is actually open (not just exists)
+        try:
+            return self._ws.state.name == "OPEN"
+        except Exception:
+            return False
 
     async def connect(self) -> None:
         """Establish connection, handling reconnection automatically."""
@@ -188,6 +195,10 @@ class Connection:
             logger.error(f"Receive loop error: {e}")
             await self._on_error(e)
             # Treat unexpected errors as connection loss and attempt reconnect
+            await self._handle_connection_lost()
+        else:
+            # Loop exited normally without exception (can happen with close code 1000/1001)
+            logger.warning("Receive loop ended - connection closed normally")
             await self._handle_connection_lost()
 
     async def _handle_connection_lost(self) -> None:

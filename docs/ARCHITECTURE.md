@@ -167,15 +167,36 @@ Client events require:
 - Private or presence channel subscription
 - Server configuration to allow client events
 
+## Connection State Detection
+
+The `is_connected` property performs multiple checks to ensure accurate connection state:
+
+1. Checks the internal `_connected` flag
+2. Verifies the websocket object exists
+3. **Checks the actual websocket state** - ensures the websocket is in the "OPEN" state
+
+This multi-layered check is important because the websockets library can close a connection internally (e.g., due to a ping timeout) without our code being immediately notified. By checking `ws.state.name == "OPEN"`, we detect when the underlying connection has closed even if the receive loop hasn't processed the close event yet.
+
 ## Reconnection Strategy
 
 When connection drops:
 
-1. Mark all channels as unsubscribed
-2. Calculate backoff delay: `min(base * multiplier^attempt, max_delay)`
-3. Add random jitter (0-25%)
-4. Attempt reconnection
-5. On success, re-subscribe to all channels
+1. The receive loop detects connection closure (via `ConnectionClosed` exception or normal loop exit)
+2. `_handle_connection_lost()` is called, which:
+   - Sets `_connected = False`
+   - Cleans up the websocket
+   - Notifies the client via `on_disconnect` callback
+   - Triggers reconnection if enabled
+3. Mark all channels as unsubscribed
+4. Calculate backoff delay: `min(base * multiplier^attempt, max_delay)`
+5. Add random jitter (0-25%)
+6. Attempt reconnection
+7. On success, re-subscribe to all channels
+
+The receive loop handles connection closure in three ways:
+- **`ConnectionClosed` exception**: Raised when websocket closes with an error code
+- **Normal loop exit**: When websocket closes with code 1000/1001 (normal closure)
+- **Other exceptions**: Treated as connection loss, triggers reconnection
 
 Default parameters:
 - Initial delay: 1 second
