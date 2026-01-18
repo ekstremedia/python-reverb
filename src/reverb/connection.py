@@ -51,6 +51,7 @@ class Connection:
         self._receive_task: asyncio.Task[None] | None = None
         self._keepalive_task: asyncio.Task[None] | None = None
         self._pending_pong: asyncio.Event | None = None
+        self._message_tasks: set[asyncio.Task[None]] = set()  # Track background message handlers
 
     @property
     def socket_id(self) -> str | None:
@@ -91,6 +92,11 @@ class Connection:
                 await self._keepalive_task
             except asyncio.CancelledError:
                 pass
+
+        # Cancel any pending message handler tasks
+        for task in list(self._message_tasks):
+            task.cancel()
+        self._message_tasks.clear()
 
         if self._ws:
             await self._ws.close()
@@ -184,6 +190,8 @@ class Connection:
             async for raw in self._ws:
                 try:
                     message = Message.from_json(str(raw))
+                    # Handle protocol messages (ping/pong) synchronously
+                    # Dispatch user messages as background tasks to avoid blocking
                     await self._handle_message(message)
                 except Exception as e:
                     logger.error(f"Error handling message: {e}")
@@ -234,8 +242,20 @@ class Connection:
             logger.error(f"Server error: {message.data}")
             await self._on_error(ProtocolError(str(message.data)))
         else:
-            # Pass to client handler
+            # Dispatch to client handler as background task to avoid blocking receive loop
+            # This allows the receive loop to continue processing messages even if
+            # a handler is slow (e.g., running a capture script)
+            task = asyncio.create_task(self._dispatch_message(message))
+            self._message_tasks.add(task)
+            task.add_done_callback(self._message_tasks.discard)
+
+    async def _dispatch_message(self, message: Message) -> None:
+        """Dispatch a message to the client handler with error handling."""
+        try:
             await self._on_message(message)
+        except Exception as e:
+            logger.error(f"Error in message handler: {e}")
+            await self._on_error(e)
 
     async def _keepalive_loop(self) -> None:
         """Send periodic pings to maintain connection."""

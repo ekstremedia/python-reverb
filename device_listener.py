@@ -74,6 +74,8 @@ class DeviceListener:
 
     # Minimum seconds between capture requests
     CAPTURE_COOLDOWN = 15
+    # Maximum seconds to wait for capture script to complete
+    CAPTURE_TIMEOUT = 120
 
     def __init__(self) -> None:
         self.client: ReverbClient | None = None
@@ -341,7 +343,25 @@ class DeviceListener:
             stderr=asyncio.subprocess.PIPE,
             env=env,
         )
-        stdout, stderr = await proc.communicate()
+
+        try:
+            stdout, stderr = await asyncio.wait_for(
+                proc.communicate(),
+                timeout=self.CAPTURE_TIMEOUT
+            )
+        except asyncio.TimeoutError:
+            logger.error("capture script timed out after %ds", self.CAPTURE_TIMEOUT)
+            # Kill the process
+            try:
+                proc.kill()
+                await proc.wait()
+            except ProcessLookupError:
+                pass
+            return {
+                "success": False,
+                "error": f"Capture script timed out after {self.CAPTURE_TIMEOUT}s",
+                "output": None,
+            }
 
         stdout_text = stdout.decode().strip()
         stderr_text = stderr.decode().strip()
